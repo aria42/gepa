@@ -42,8 +42,8 @@ def test_initialize_gepa_state_fresh_init_writes_and_counts(run_dir):
     p0 = base / "task_0" / "iter_0_prog_0.json"
     p1 = base / "task_1" / "iter_0_prog_0.json"
     assert p0.exists() and p1.exists()
-    assert json.loads(p0.read_text()) == 0.1
-    assert json.loads(p1.read_text()) == 0.2
+    assert json.loads(p0.read_text()) == "out0"
+    assert json.loads(p1.read_text()) == {"k": "out1"}
 
 
 def test_initialize_gepa_state_no_run_dir():
@@ -90,6 +90,27 @@ def test_gepa_state_save_and_initialize(run_dir):
     )
 
     assert state.__dict__ == result.__dict__
+
+
+def test_record_val_scores_updates_state():
+    seed = {"model": "m"}
+    valset_out = (["out0"], [0.1])
+    state = state_mod.GEPAState(seed, valset_out)
+
+    assert state.program_val_coverage_counts[0] == 1
+    state.record_val_scores(
+        program_idx=0,
+        scores={2: 0.9},
+        outputs={2: "out2"},
+        run_dir=None,
+        iteration=1,
+    )
+
+    avg, coverage = state.get_program_average(0)
+    assert coverage == 2
+    assert avg is not None and avg > 0.1
+    assert 2 in state.pareto_front_valset
+    assert 2 not in state.unevaluated_val_ids
 
 
 @pytest.fixture(scope="module")

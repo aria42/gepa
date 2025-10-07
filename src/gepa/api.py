@@ -8,8 +8,8 @@ from typing import Any, Callable
 from gepa.adapters.default_adapter.default_adapter import DefaultAdapter
 from gepa.core.adapter import DataInst, GEPAAdapter, RolloutOutput, Trajectory
 from gepa.core.engine import GEPAEngine
-from gepa.core.state import GEPAState
 from gepa.core.result import GEPAResult
+from gepa.core.state import GEPAState
 from gepa.logging.experiment_tracker import create_experiment_tracker
 from gepa.logging.logger import LoggerProtocol, StdOutLogger
 from gepa.proposer.merge import MergeProposer
@@ -58,7 +58,7 @@ def optimize(
     # Reproducibility
     seed: int = 0,
     raise_on_exception: bool = True,
-    val_evaluation_policy: Callable[[GEPAState], list[int] | None] | None = None,
+    val_evaluation_policy: Callable[[GEPAState], list[int]] | None = None,
 ):
     """
     GEPA is an evolutionary optimizer that evolves (multiple) text components of a complex system to optimize them towards a given metric.

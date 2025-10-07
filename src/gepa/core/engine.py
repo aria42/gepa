@@ -81,12 +81,13 @@ class GEPAEngine(Generic[DataInst, Trajectory, RolloutOutput]):
         assert self.valset is not None
 
         indices = self.val_evaluation_policy(state) if self.val_evaluation_policy else range(len(self.valset))
+        indices = indices or []
         batch = [self.valset[idx] for idx in indices]
         outputs, scores = self.evaluator(batch, program)
-        assert len(outputs) == len(indices) , "Eval outputs should match length of selected validation indices"
-        
-        outputs_by_val_idx = dict(zip(indices, outputs))
-        scores_by_val_idx = dict(zip(indices, scores))
+        assert len(outputs) == len(indices), "Eval outputs should match length of selected validation indices"
+
+        outputs_by_val_idx = dict(zip(indices, outputs, strict=False))
+        scores_by_val_idx = dict(zip(indices, scores, strict=False))
         return outputs_by_val_idx, scores_by_val_idx
 
     def _get_pareto_front_programs(self, state: GEPAState) -> list:
@@ -101,11 +102,7 @@ class GEPAEngine(Generic[DataInst, Trajectory, RolloutOutput]):
         num_metric_calls_by_discovery = state.total_num_evals
 
         valset_outputs, valset_scores = self._evaluate_on_valset(new_program, state)
-
-        if len(valset_scores) == 0:
-            raise ValueError("Validation evaluation returned no scores; ensure at least one val example is evaluated")
-
-        valset_score = sum(valset_scores.values()) / len(valset_scores)
+        valset_score = sum(valset_scores.values()) / len(valset_scores) if len(valset_scores) > 0 else float("-inf")
 
         state.num_full_ds_evals += 1
         state.total_num_evals += len(valset_scores)
@@ -165,29 +162,37 @@ class GEPAEngine(Generic[DataInst, Trajectory, RolloutOutput]):
         if self.valset is None:
             raise ValueError("valset must be provided to GEPAEngine.run()")
 
+        def valset_evaluator(program: dict[str, str]):
+            all_outputs, all_scores = self.evaluator(self.valset, program)
+            return (
+                {val_idx: output for val_idx, output in enumerate(all_outputs)},
+                {val_idx: score for val_idx, score in enumerate(all_scores)},
+            )
+
         # Initialize state
         state = initialize_gepa_state(
             run_dir=self.run_dir,
             logger=self.logger,
             seed_candidate=self.seed_candidate,
-            valset_evaluator=lambda prog: self.evaluator(self.valset, prog),
+            valset_evaluator=valset_evaluator,
             track_best_outputs=self.track_best_outputs,
-            current_valset_size=len(self.valset),
+            valset_size=len(self.valset),
         )
 
         # Log base program score
+        base_val_avg, base_val_coverage = state.get_program_average(0)
         self.experiment_tracker.log_metrics(
             {
-                "base_program_full_valset_score": state.program_full_scores_val_set[0],
-                "base_program_val_coverage": state.program_val_coverage_counts[0],
+                "base_program_full_valset_score": base_val_avg,
+                "base_program_val_coverage": base_val_coverage,
                 "iteration": state.i + 1,
             },
             step=state.i + 1,
         )
 
         self.logger.log(
-            f"Iteration {state.i + 1}: Base program full valset score: {state.program_full_scores_val_set[0]} "
-            f"over {state.program_val_coverage_counts[0]} / {len(state.known_val_ids)} examples"
+            f"Iteration {state.i + 1}: Base program full valset score: {base_val_avg} "
+            f"over {base_val_coverage} / {state.valset_size} examples"
         )
 
         # Merge scheduling
@@ -249,10 +254,14 @@ class GEPAEngine(Generic[DataInst, Trajectory, RolloutOutput]):
                 old_sum = sum(proposal.subsample_scores_before or [])
                 new_sum = sum(proposal.subsample_scores_after or [])
                 if new_sum <= old_sum:
-                    self.logger.log(f"Iteration {state.i + 1}: New subsample score {new_sum} is not better than old score {old_sum}, skipping")
+                    self.logger.log(
+                        f"Iteration {state.i + 1}: New subsample score {new_sum} is not better than old score {old_sum}, skipping"
+                    )
                     continue
                 else:
-                    self.logger.log(f"Iteration {state.i + 1}: New subsample score {new_sum} is better than old score {old_sum}. Continue to full eval and add to candidate pool.")
+                    self.logger.log(
+                        f"Iteration {state.i + 1}: New subsample score {new_sum} is better than old score {old_sum}. Continue to full eval and add to candidate pool."
+                    )
 
                 # Accept: full eval + add
                 self._run_full_eval_and_add(

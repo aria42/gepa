@@ -18,10 +18,8 @@ def common_mocks():
         program_full_scores_val_set=[0.5],
         per_program_tracked_scores=[0.5],
         program_val_scores=[{}],
-        program_val_coverage_counts=[0],
         program_at_pareto_front_valset={},
         num_metric_calls_by_discovery=[1],
-        known_val_ids=set(),
         unevaluated_val_ids=set(),
     )
 

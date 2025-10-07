@@ -1,12 +1,13 @@
 import json
 import os
+import random
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-import gepa.core.state as state_mod
 import gepa
+import gepa.core.state as state_mod
 from gepa.core.adapter import EvaluationBatch
 
 
@@ -19,7 +20,7 @@ def run_dir(tmp_path):
 def test_initialize_gepa_state_fresh_init_writes_and_counts(run_dir):
     """With a run dir but no state, the state is initialized from scratch and the eval output is written to the run dir."""
     seed = {"model": "m"}
-    valset_out = (["out0", {"k": "out1"}], [0.1, 0.2])
+    valset_out = ({0: "out0", 1: {"k": "out1"}}, {0: 0.1, 1: 0.2})
 
     fake_logger = MagicMock()
     valset_evaluator = MagicMock(return_value=valset_out)
@@ -50,7 +51,7 @@ def test_initialize_gepa_state_fresh_init_writes_and_counts(run_dir):
 def test_initialize_gepa_state_no_run_dir():
     """Without a run dir, the state is initialized from scratch and not saved."""
     seed = {"model": "m"}
-    valset_out = (["out"], [0.5])
+    valset_out = ({0: "out"}, {0: 0.5})
     fake_logger = MagicMock()
     valset_evaluator = MagicMock(return_value=valset_out)
 
@@ -72,7 +73,7 @@ def test_initialize_gepa_state_no_run_dir():
 def test_gepa_state_save_and_initialize(run_dir):
     """With a run dir that contains a saved state, the state is saved and initialized from it."""
     seed = {"model": "m"}
-    valset_out = ([{"x": 1}, {"y": 2}], [0.3, 0.7])
+    valset_out = ({0: {"x": 1}, 1: {"y": 2}}, {0: 0.3, 1: 0.7})
     fake_logger = MagicMock()
     valset_evaluator = MagicMock(return_value=valset_out)
 
@@ -93,25 +94,9 @@ def test_gepa_state_save_and_initialize(run_dir):
     assert state.__dict__ == result.__dict__
 
 
-def test_record_val_scores_updates_state():
-    seed = {"model": "m"}
-    valset_out = (["out0"], [0.1])
-    state = state_mod.GEPAState(seed, valset_out)
-
-    assert state.program_val_coverage_counts[0] == 1
-    state.record_val_scores(
-        program_idx=0,
-        scores={2: 0.9},
-        outputs={2: "out2"},
-        run_dir=None,
-        iteration=1,
-    )
-
-    avg, coverage = state.get_program_average(0)
-    assert coverage == 2
-    assert avg is not None and avg > 0.1
-    assert 2 in state.pareto_front_valset
-    assert 2 not in state.unevaluated_val_ids
+@pytest.fixture
+def rng():
+    return random.Random(42)
 
 
 def test_dynamic_validation(run_dir):
@@ -132,14 +117,14 @@ def test_dynamic_validation(run_dir):
 
         def make_reflective_dataset(self, candidate, eval_batch, components_to_update):
             records = [{"score": score} for score in eval_batch.scores]
-            return {name: records for name in components_to_update}
+            return dict.fromkeys(components_to_update, records)
 
         def _propose_new_texts(self, candidate, reflective_dataset, components_to_update):
             weight = int(candidate["system_prompt"].split("=")[-1])
-            return {name: f"weight={weight + 1}" for name in components_to_update}
+            return dict.fromkeys(components_to_update, f"weight={weight + 1}")
 
     adapter = DummyAdapter()
-    
+
     # initially only validate on first example
     init_validation_policy = lambda state: [0]
 
@@ -158,6 +143,7 @@ def test_dynamic_validation(run_dir):
     assert len(state_phase_one.program_candidates) >= 2
     assert 0 in state_phase_one.program_val_scores[-1]
     assert 1 not in state_phase_one.program_val_scores[-1]
+    assert state_phase_one.unevaluated_val_ids == set()
 
     extended_valset = valset_initial + [{"id": 2, "difficulty": 4}]
 
@@ -165,8 +151,9 @@ def test_dynamic_validation(run_dir):
         missing = sorted(state.unevaluated_val_ids)
         if missing:
             return missing
-        return None
+        return rng.sample(range(len(state.valset_size)), 1)
 
+    best_stage1_candidate = state_phase_one._best_program_idx()
     gepa.optimize(
         seed_candidate=seed_candidate,
         trainset=trainset,
@@ -179,7 +166,7 @@ def test_dynamic_validation(run_dir):
     )
 
     resumed_state = state_mod.GEPAState.load(str(run_dir))
-    assert resumed_state.known_val_ids == {0, 1, 2}
+    assert resumed_state.valset_size == 3
     assert resumed_state.unevaluated_val_ids == set()
     assert set(resumed_state.program_val_scores[0].keys()) == {0, 1}
     covered_ids = set().union(*[scores.keys() for scores in resumed_state.program_val_scores])

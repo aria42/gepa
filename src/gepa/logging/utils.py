@@ -19,7 +19,7 @@ def log_detailed_metrics_after_discovering_new_program(
     best_prog_as_per_agg_score_valset = idxmax(gepa_state.program_full_scores_val_set)
 
     avg, coverage = gepa_state.get_program_average(new_program_idx)
-    total_val_examples = len(gepa_state.known_val_ids)
+    total_val_examples = gepa_state.valset_size
 
     logger.log(
         f"Iteration {gepa_state.i + 1}: Valset score for new program: {valset_score}"
@@ -34,9 +34,7 @@ def log_detailed_metrics_after_discovering_new_program(
     pareto_scores = [score for score in gepa_state.pareto_front_valset.values() if score != float("-inf")]
     pareto_avg = (sum(pareto_scores) / len(pareto_scores)) if pareto_scores else float("-inf")
 
-    logger.log(
-        f"Iteration {gepa_state.i + 1}: Valset pareto front aggregate score: {pareto_avg}"
-    )
+    logger.log(f"Iteration {gepa_state.i + 1}: Valset pareto front aggregate score: {pareto_avg}")
     logger.log(
         f"Iteration {gepa_state.i + 1}: Updated valset pareto front programs: {gepa_state.program_at_pareto_front_valset}"
     )

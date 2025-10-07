@@ -143,19 +143,22 @@ def test_dynamic_validation(run_dir):
     assert len(state_phase_one.program_candidates) >= 2
     assert 0 in state_phase_one.program_val_scores[-1]
     assert 1 not in state_phase_one.program_val_scores[-1]
-    assert state_phase_one.unevaluated_val_ids == set()
+    assert state_phase_one.valset_evaluations.keys() == {0, 1}
 
     extended_valset = valset_initial + [{"id": 2, "difficulty": 4}]
 
-    def backfill_validation_policy(state):
-        missing = sorted(state.unevaluated_val_ids)
-        if missing:
-            return missing
-        return rng.sample(range(len(state.valset_size)), 1)
+    valset_ids = set(range(len(extended_valset)))
 
-    best_stage1_candidate = state_phase_one._best_program_idx()
+    def backfill_validation_policy(state: state_mod.GEPAState):
+        missing_valset_ids = valset_ids.difference(state.valset_evaluations.keys())
+        if missing_valset_ids:
+            return missing_valset_ids
+        return rng.sample(valset_ids, 1)
+
+    best_stage1_candidate_idx = state_phase_one._best_program_idx()
+    best_stage1_candidate = state_phase_one.program_candidates[best_stage1_candidate_idx]
     gepa.optimize(
-        seed_candidate=seed_candidate,
+        seed_candidate=best_stage1_candidate,
         trainset=trainset,
         valset=extended_valset,
         adapter=adapter,
@@ -166,8 +169,7 @@ def test_dynamic_validation(run_dir):
     )
 
     resumed_state = state_mod.GEPAState.load(str(run_dir))
-    assert resumed_state.valset_size == 3
-    assert resumed_state.unevaluated_val_ids == set()
+    assert resumed_state.valset_evaluations.keys() == valset_ids
     assert set(resumed_state.program_val_scores[0].keys()) == {0, 1}
     covered_ids = set().union(*[scores.keys() for scores in resumed_state.program_val_scores])
     assert covered_ids == {0, 1, 2}

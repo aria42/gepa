@@ -20,7 +20,6 @@ def common_mocks():
         program_val_scores=[{}],
         program_at_pareto_front_valset={},
         num_metric_calls_by_discovery=[1],
-        unevaluated_val_ids=set(),
     )
 
     mock_adapter = Mock()

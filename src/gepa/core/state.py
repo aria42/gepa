@@ -3,19 +3,23 @@
 
 import json
 import os
-from typing import Any, Callable, Generic
+from collections import defaultdict
+from typing import Any, Callable, ClassVar, Generic, Hashable, TypeAlias, TypeVar
 
 from gepa.core.adapter import RolloutOutput
 from gepa.gepa_utils import json_default
 
+# Types for GEPAState
 ProgramIdx = int
-ValId = int
-ValScores = dict[ValId, float]
-ValOutputs = dict[ValId, RolloutOutput]
-_VALIDATION_SCHEMA_VERSION = 2
+ValId = TypeVar("ValId", bound=Hashable)
+"""Opaque identifier for valset examples"""
+ValScores: TypeAlias = dict[ValId, float]
+ValOutputs: TypeAlias = dict[ValId, RolloutOutput]
 
 
-class GEPAState(Generic[RolloutOutput]):
+class GEPAState(Generic[RolloutOutput, ValId]):
+    _VALIDATION_SCHEMA_VERSION: ClassVar[int] = 2
+
     program_candidates: list[dict[str, str]]
     parent_program_for_candidate: list[list[ProgramIdx | None]]
 
@@ -26,8 +30,6 @@ class GEPAState(Generic[RolloutOutput]):
 
     list_of_named_predictors: list[str]
     named_predictor_id_to_update_next_for_program_candidate: list[int]
-
-    valset_size: int
 
     i: int
     num_full_ds_evals: int
@@ -45,7 +47,6 @@ class GEPAState(Generic[RolloutOutput]):
         self,
         seed_candidate: dict[str, str],
         base_valset_eval_output: tuple[ValOutputs, ValScores],
-        valset_size: int | None = None,
         track_best_outputs: bool = False,
     ):
         base_outputs, base_scores = base_valset_eval_output
@@ -66,13 +67,8 @@ class GEPAState(Generic[RolloutOutput]):
             {val_id: [(0, output)] for val_id, output in base_outputs.items()} if track_best_outputs else None
         )
 
-        if valset_size is None:
-            # if not told valset size, assume we observe largest id
-            valset_size = max(val_id for val_id in base_scores.keys()) + 1
-        self.valset_size = valset_size
-
         self.full_program_trace = []
-        self.validation_schema_version = _VALIDATION_SCHEMA_VERSION
+        self.validation_schema_version = self._VALIDATION_SCHEMA_VERSION
 
     def is_consistent(self):
         assert len(self.program_candidates) == len(self.parent_program_for_candidate)
@@ -87,7 +83,6 @@ class GEPAState(Generic[RolloutOutput]):
                 )
 
         assert set(self.pareto_front_valset.keys()) == set(self.program_at_pareto_front_valset.keys())
-        assert max(self.program_at_pareto_front_valset.keys()) < self.valset_size
 
         return True
 
@@ -98,7 +93,7 @@ class GEPAState(Generic[RolloutOutput]):
             import pickle
 
             d = dict(self.__dict__.items())
-            d["validation_schema_version"] = _VALIDATION_SCHEMA_VERSION
+            d["validation_schema_version"] = GEPAState._VALIDATION_SCHEMA_VERSION
             pickle.dump(d, f)
 
     @staticmethod
@@ -115,13 +110,12 @@ class GEPAState(Generic[RolloutOutput]):
         state = GEPAState.__new__(GEPAState)
         state.__dict__.update(d)
 
-        state.validation_schema_version = _VALIDATION_SCHEMA_VERSION
+        state.validation_schema_version = GEPAState._VALIDATION_SCHEMA_VERSION
         assert set(state.pareto_front_valset.keys()) == set(state.program_at_pareto_front_valset.keys())
         assert len(state.program_candidates) == len(state.program_val_scores)
         assert len(state.program_candidates) == len(state.num_metric_calls_by_discovery)
         assert len(state.program_candidates) == len(state.parent_program_for_candidate)
         assert len(state.program_candidates) == len(state.named_predictor_id_to_update_next_for_program_candidate)
-        assert max(state.pareto_front_valset.keys()) < state.valset_size
         return state
 
     @staticmethod
@@ -145,8 +139,7 @@ class GEPAState(Generic[RolloutOutput]):
         if isinstance(best_outputs, list):
             d["best_outputs_valset"] = {idx: list(outputs) for idx, outputs in enumerate(best_outputs)}
 
-        d["valset_size"] = len(best_outputs)
-        d["validation_schema_version"] = _VALIDATION_SCHEMA_VERSION
+        d["validation_schema_version"] = GEPAState._VALIDATION_SCHEMA_VERSION
 
     def get_program_average(self, program_idx: int) -> tuple[float, int]:
         scores = self.program_val_scores[program_idx]
@@ -156,16 +149,17 @@ class GEPAState(Generic[RolloutOutput]):
         avg = sum(scores.values()) / num_samples
         return avg, num_samples
 
-    def missing_val_ids_for_program(self, program_idx: int) -> set[int]:
-        return set(range(self.valset_size)).difference(self.program_val_scores[program_idx].keys())
-
     @property
-    def unevaluated_val_ids(self) -> set[int]:
-        """ Validation examples not evaluated for any program """
-        unevaluated_val_ids = set(range(self.valset_size))
-        for val_scores in self.program_val_scores:
-            unevaluated_val_ids = unevaluated_val_ids.difference(val_scores.keys())
-        return unevaluated_val_ids
+    def valset_evaluations(self) -> dict[ValId, list[ProgramIdx]]:
+        """
+        Valset examples by id and programs that have evaluated them. Keys consist of all known
+        valset ids
+        """
+        result = defaultdict(list)
+        for program_idx, val_scores in enumerate(self.program_val_scores):
+            for val_id in val_scores.keys():
+                result[val_id].append(program_idx)
+        return result
 
     @property
     def program_full_scores_val_set(self) -> list[float]:
@@ -173,7 +167,7 @@ class GEPAState(Generic[RolloutOutput]):
 
     @property
     def per_program_tracked_scores(self) -> list[float]:
-        # TODO(aria42): This is same as valset program average scores, but this was already the case
+        # NOTE(aria42): This same as valset program average scores, but this was already the case
         return [self.get_program_average(program_idx)[0] for program_idx in range(len(self.program_val_scores))]
 
     def _update_pareto_front_for_val_id(
@@ -206,7 +200,7 @@ class GEPAState(Generic[RolloutOutput]):
         self,
         parent_program_idx: list[int],
         new_program: dict[str, str],
-        valset_scores: ValScores,
+        valset_subscores: ValScores,
         valset_outputs: dict[int, RolloutOutput] | None,
         run_dir: str | None,
         num_metric_calls_by_discovery_of_new_program: int,
@@ -222,9 +216,9 @@ class GEPAState(Generic[RolloutOutput]):
         self.named_predictor_id_to_update_next_for_program_candidate.append(max_predictor_id)
         self.parent_program_for_candidate.append(list(parent_program_idx))
 
-        self.program_val_scores.append(dict(valset_scores))
+        self.program_val_scores.append(dict(valset_subscores))
 
-        for val_id, score in valset_scores.items():
+        for val_id, score in valset_subscores.items():
             self._update_pareto_front_for_val_id(val_id, score, new_program_idx, valset_outputs, run_dir, self.i + 1)
 
         linear_pareto_front_program_idx = self._best_program_idx()
@@ -254,15 +248,10 @@ def initialize_gepa_state(
     seed_candidate: dict[str, str],
     valset_evaluator: Callable[[dict[str, str]], tuple[ValOutputs, ValScores]],
     track_best_outputs: bool = False,
-    valset_size: int | None = None,
 ):
     if run_dir is not None and os.path.exists(os.path.join(run_dir, "gepa_state.bin")):
         logger.log("Loading gepa state from run dir")
         gepa_state = GEPAState.load(run_dir)
-        if valset_size:
-            if gepa_state.valset_size > valset_size:
-                raise ValueError("Cannot shrink valset")
-            gepa_state.valset_size = max(gepa_state.valset_size, valset_size)
     else:
         num_evals_run = 0
 

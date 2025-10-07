@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Generic
 
 from gepa.core.adapter import RolloutOutput
+from gepa.core.state import ProgramIdx, ValId, ValScores
 
 
 @dataclass(frozen=True)
@@ -39,16 +40,17 @@ class GEPAResult(Generic[RolloutOutput]):
     - instance_winners(t): set of candidates on the pareto front for val instance t
     - to_dict(...), save_json(...): serialization helpers
     """
+
     # Core data
     candidates: list[dict[str, str]]
-    parents: list[list[int | None]]
+    parents: list[list[ProgramIdx | None]]
     val_aggregate_scores: list[float]
-    val_subscores: list[dict[int, float]]
-    per_val_instance_best_candidates: dict[int, set[int]]
+    val_subscores: list[ValScores]
+    per_val_instance_best_candidates: dict[ValId, set[ProgramIdx]]
     discovery_eval_counts: list[int]
 
     # Optional data
-    best_outputs_valset: dict[int, list[tuple[int, RolloutOutput]]] | None = None
+    best_outputs_valset: dict[ValId, list[tuple[ProgramIdx, RolloutOutput]]] | None = None
 
     # Run metadata (optional)
     total_metric_calls: int | None = None
@@ -75,10 +77,7 @@ class GEPAResult(Generic[RolloutOutput]):
         return self.candidates[self.best_idx]
 
     def to_dict(self) -> dict[str, Any]:
-        cands = [
-            dict(cand.items())
-            for cand in self.candidates
-        ]
+        cands = [dict(cand.items()) for cand in self.candidates]
 
         return dict(
             candidates=cands,
@@ -106,7 +105,9 @@ class GEPAResult(Generic[RolloutOutput]):
             val_aggregate_scores=list(state.program_full_scores_val_set),
             best_outputs_valset=getattr(state, "best_outputs_valset", None),
             val_subscores=[dict(scores) for scores in state.program_val_scores],
-            per_val_instance_best_candidates={val_id: set(front) for val_id, front in state.program_at_pareto_front_valset.items()},
+            per_val_instance_best_candidates={
+                val_id: set(front) for val_id, front in state.program_at_pareto_front_valset.items()
+            },
             discovery_eval_counts=list(state.num_metric_calls_by_discovery),
             total_metric_calls=getattr(state, "total_num_evals", None),
             num_full_val_evals=getattr(state, "num_full_ds_evals", None),

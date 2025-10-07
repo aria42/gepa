@@ -14,16 +14,15 @@ def log_detailed_metrics_after_discovering_new_program(
     valset_scores,
     experiment_tracker,
     linear_pareto_front_program_idx,
+    valset_size: int,
 ):
     best_prog_as_per_agg_score = idxmax(gepa_state.per_program_tracked_scores)
     best_prog_as_per_agg_score_valset = idxmax(gepa_state.program_full_scores_val_set)
 
     avg, coverage = gepa_state.get_program_average(new_program_idx)
-    total_val_examples = gepa_state.valset_size
-
     logger.log(
         f"Iteration {gepa_state.i + 1}: Valset score for new program: {valset_score}"
-        f" (coverage {coverage}/{total_val_examples})"
+        f" (coverage {coverage} / {valset_size})"
     )
     logger.log(
         f"Iteration {gepa_state.i + 1}: Train/val aggregate for new program: {gepa_state.per_program_tracked_scores[new_program_idx]}"
@@ -55,10 +54,6 @@ def log_detailed_metrics_after_discovering_new_program(
     )
     logger.log(f"Iteration {gepa_state.i + 1}: Linear pareto front program index: {linear_pareto_front_program_idx}")
     logger.log(f"Iteration {gepa_state.i + 1}: New program candidate index: {new_program_idx}")
-    if gepa_state.unevaluated_val_ids:
-        logger.log(
-            f"Iteration {gepa_state.i + 1}: Valset ids pending evaluation: {sorted(gepa_state.unevaluated_val_ids)}"
-        )
 
     metrics = {
         "iteration": gepa_state.i + 1,
@@ -74,10 +69,8 @@ def log_detailed_metrics_after_discovering_new_program(
         "best_score_on_valset": gepa_state.program_full_scores_val_set[best_prog_as_per_agg_score_valset],
         "best_score_on_train_val": gepa_state.per_program_tracked_scores[best_prog_as_per_agg_score],
         "val_evaluated_count_new_program": coverage,
-        "val_total_count": total_val_examples,
+        "val_total_count": valset_size,
         "val_program_average": avg if avg is not None else None,
     }
-    if gepa_state.unevaluated_val_ids:
-        metrics["unevaluated_val_ids"] = sorted(gepa_state.unevaluated_val_ids)
 
     experiment_tracker.log_metrics(metrics, step=gepa_state.i + 1)

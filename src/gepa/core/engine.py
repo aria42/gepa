@@ -101,22 +101,24 @@ class GEPAEngine(Generic[DataInst, Trajectory, RolloutOutput]):
     ) -> tuple[int, int]:
         num_metric_calls_by_discovery = state.total_num_evals
 
-        valset_outputs, valset_scores = self._evaluate_on_valset(new_program, state)
-        valset_score = sum(valset_scores.values()) / len(valset_scores) if len(valset_scores) > 0 else float("-inf")
+        valset_outputs, valset_subscores = self._evaluate_on_valset(new_program, state)
+        valset_score = (
+            sum(valset_subscores.values()) / len(valset_subscores) if len(valset_subscores) > 0 else float("-inf")
+        )
 
         state.num_full_ds_evals += 1
-        state.total_num_evals += len(valset_scores)
+        state.total_num_evals += len(valset_subscores)
 
         new_program_idx, linear_pareto_front_program_idx = state.update_state_with_new_program(
             parent_program_idx=parent_program_idx,
             new_program=new_program,
             valset_outputs=valset_outputs,
-            valset_scores=valset_scores,
+            valset_subscores=valset_subscores,
             run_dir=self.run_dir,
             num_metric_calls_by_discovery_of_new_program=num_metric_calls_by_discovery,
         )
         state.full_program_trace[-1]["new_program_idx"] = new_program_idx
-        state.full_program_trace[-1]["evaluated_val_indices"] = sorted(valset_scores.keys())
+        state.full_program_trace[-1]["evaluated_val_indices"] = sorted(valset_subscores.keys())
 
         if new_program_idx == linear_pareto_front_program_idx:
             self.logger.log(f"Iteration {state.i + 1}: New program is on the linear pareto front")
@@ -126,9 +128,10 @@ class GEPAEngine(Generic[DataInst, Trajectory, RolloutOutput]):
             gepa_state=state,
             valset_score=valset_score,
             new_program_idx=new_program_idx,
-            valset_scores=valset_scores,
+            valset_scores=valset_subscores,
             experiment_tracker=self.experiment_tracker,
             linear_pareto_front_program_idx=linear_pareto_front_program_idx,
+            valset_size=len(self.valset),
         )
         return new_program_idx, linear_pareto_front_program_idx
 
@@ -176,7 +179,6 @@ class GEPAEngine(Generic[DataInst, Trajectory, RolloutOutput]):
             seed_candidate=self.seed_candidate,
             valset_evaluator=valset_evaluator,
             track_best_outputs=self.track_best_outputs,
-            valset_size=len(self.valset),
         )
 
         # Log base program score
@@ -192,7 +194,7 @@ class GEPAEngine(Generic[DataInst, Trajectory, RolloutOutput]):
 
         self.logger.log(
             f"Iteration {state.i + 1}: Base program full valset score: {base_val_avg} "
-            f"over {base_val_coverage} / {state.valset_size} examples"
+            f"over {base_val_coverage} / {len(self.valset)} examples"
         )
 
         # Merge scheduling

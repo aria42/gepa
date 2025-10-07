@@ -44,7 +44,7 @@ class GEPAEngine(Generic[DataInst, Trajectory, RolloutOutput]):
         raise_on_exception: bool = True,
         # Budget and Stop Condition
         stop_callback: Callable[[Any], bool] | None = None,
-        val_evaluation_policy: Callable[[GEPAState], list[int] | None] | None = None,
+        val_evaluation_policy: Callable[[GEPAState], list[int]] | None = None,
     ):
         self.logger = logger
         self.run_dir = run_dir
@@ -75,31 +75,19 @@ class GEPAEngine(Generic[DataInst, Trajectory, RolloutOutput]):
         self.raise_on_exception = raise_on_exception
         self.val_evaluation_policy = val_evaluation_policy
 
-    def _select_val_indices(self, state: GEPAState) -> list[int] | None:
-        if self.val_evaluation_policy is None:
-            return None
-        indices = self.val_evaluation_policy(state)
-        if indices is None or len(indices) == 0:
-            return None
-        return indices
-
     def _evaluate_on_valset(
-        self, program: dict[str, str], indices: list[int] | None
+        self, program: dict[str, str], state: GEPAState
     ) -> tuple[dict[int, RolloutOutput], dict[int, float]]:
         assert self.valset is not None
 
-        if indices is None:
-            batch = self.valset
-            outputs, scores = self.evaluator(batch, program)
-            index_iter = range(len(scores))
-        else:
-            batch = [self.valset[idx] for idx in indices]
-            outputs, scores = self.evaluator(batch, program)
-            index_iter = indices
-
-        outputs_by_id = {idx: outputs[pos] for pos, idx in enumerate(index_iter)}
-        scores_by_id = {idx: scores[pos] for pos, idx in enumerate(index_iter)}
-        return outputs_by_id, scores_by_id
+        indices = self.val_evaluation_policy(state) if self.val_evaluation_policy else range(len(self.valset))
+        batch = [self.valset[idx] for idx in indices]
+        outputs, scores = self.evaluator(batch, program)
+        assert len(outputs) == len(indices) , "Eval outputs should match length of selected validation indices"
+        
+        outputs_by_val_idx = dict(zip(indices, outputs))
+        scores_by_val_idx = dict(zip(indices, scores))
+        return outputs_by_val_idx, scores_by_val_idx
 
     def _get_pareto_front_programs(self, state: GEPAState) -> list:
         return state.program_at_pareto_front_valset
@@ -112,8 +100,7 @@ class GEPAEngine(Generic[DataInst, Trajectory, RolloutOutput]):
     ) -> tuple[int, int]:
         num_metric_calls_by_discovery = state.total_num_evals
 
-        val_indices = self._select_val_indices(state)
-        valset_outputs, valset_scores = self._evaluate_on_valset(new_program, val_indices)
+        valset_outputs, valset_scores = self._evaluate_on_valset(new_program, state)
 
         if len(valset_scores) == 0:
             raise ValueError("Validation evaluation returned no scores; ensure at least one val example is evaluated")

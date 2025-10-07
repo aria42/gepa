@@ -199,10 +199,6 @@ class GEPAState(Generic[RolloutOutput]):
         iteration: int,
     ) -> None:
         program_scores = self.program_val_scores[program_idx]
-        for val_id in scores:
-            if val_id not in self.known_val_ids:
-                self.register_new_val_ids([val_id])
-
         program_scores.update(scores)
         self.program_val_coverage_counts[program_idx] = len(program_scores)
 
@@ -212,8 +208,6 @@ class GEPAState(Generic[RolloutOutput]):
 
         for val_id, score in scores.items():
             self._update_pareto_front_for_val_id(val_id, score, program_idx, outputs, run_dir, iteration)
-            if val_id in self.unevaluated_val_ids:
-                self.unevaluated_val_ids.discard(val_id)
 
     def _update_pareto_front_for_val_id(
         self,
@@ -267,23 +261,20 @@ class GEPAState(Generic[RolloutOutput]):
         self.named_predictor_id_to_update_next_for_program_candidate.append(max_predictor_id)
         self.parent_program_for_candidate.append(list(parent_program_idx))
 
-        normalized_scores = dict(valset_scores)
-        for val_id in normalized_scores:
-            if val_id not in self.known_val_ids:
-                self.register_new_val_ids([val_id])
-
-        self.program_val_scores.append(normalized_scores)
+        self.program_val_scores.append(dict(valset_scores))
         coverage = len(valset_scores)
         self.program_val_coverage_counts.append(coverage)
 
-        avg = self._compute_average(normalized_scores)
+        avg = self._compute_average(valset_scores)
         self.program_full_scores_val_set.append(avg)
         self.per_program_tracked_scores.append(avg)
 
-        for val_id, score in normalized_scores.items():
-            self._update_pareto_front_for_val_id(val_id, score, new_program_idx, valset_outputs, run_dir, self.i + 1)
+        for val_id in valset_scores:
             if val_id in self.unevaluated_val_ids:
                 self.unevaluated_val_ids.discard(val_id)
+
+        for val_id, score in valset_scores.items():
+            self._update_pareto_front_for_val_id(val_id, score, new_program_idx, valset_outputs, run_dir, self.i + 1)
 
         linear_pareto_front_program_idx = self._best_program_idx()
         return new_program_idx, linear_pareto_front_program_idx

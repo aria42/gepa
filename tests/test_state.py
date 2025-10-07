@@ -7,6 +7,7 @@ import pytest
 
 import gepa.core.state as state_mod
 import gepa
+from gepa.core.adapter import EvaluationBatch
 
 
 @pytest.fixture
@@ -111,6 +112,78 @@ def test_record_val_scores_updates_state():
     assert avg is not None and avg > 0.1
     assert 2 in state.pareto_front_valset
     assert 2 not in state.unevaluated_val_ids
+
+
+def test_dynamic_validation(run_dir):
+    trainset = [{"id": i, "difficulty": i + 2} for i in range(3)]
+    valset_initial = [{"id": i, "difficulty": i + 2} for i in range(2)]
+    seed_candidate = {"system_prompt": "weight=0"}
+
+    class DummyAdapter:
+        def __init__(self):
+            self.propose_new_texts = self._propose_new_texts
+
+        def evaluate(self, batch, candidate, capture_traces=False):
+            weight = int(candidate["system_prompt"].split("=")[-1])
+            outputs = [{"id": item["id"], "weight": weight} for item in batch]
+            scores = [min(1.0, (weight + 1) / (item["difficulty"])) for item in batch]
+            trajectories = [{"score": score} for score in scores] if capture_traces else None
+            return EvaluationBatch(outputs=outputs, scores=scores, trajectories=trajectories)
+
+        def make_reflective_dataset(self, candidate, eval_batch, components_to_update):
+            records = [{"score": score} for score in eval_batch.scores]
+            return {name: records for name in components_to_update}
+
+        def _propose_new_texts(self, candidate, reflective_dataset, components_to_update):
+            weight = int(candidate["system_prompt"].split("=")[-1])
+            return {name: f"weight={weight + 1}" for name in components_to_update}
+
+    adapter = DummyAdapter()
+    
+    # initially only validate on first example
+    init_validation_policy = lambda state: [0]
+
+    gepa.optimize(
+        seed_candidate=seed_candidate,
+        trainset=trainset,
+        valset=valset_initial,
+        adapter=adapter,
+        reflection_lm=None,
+        max_metric_calls=6,
+        run_dir=run_dir,
+        val_evaluation_policy=init_validation_policy,
+    )
+
+    state_phase_one = state_mod.GEPAState.load(str(run_dir))
+    assert len(state_phase_one.program_candidates) >= 2
+    assert 0 in state_phase_one.program_val_scores[-1]
+    assert 1 not in state_phase_one.program_val_scores[-1]
+
+    extended_valset = valset_initial + [{"id": 2, "difficulty": 4}]
+
+    def backfill_validation_policy(state):
+        missing = sorted(state.unevaluated_val_ids)
+        if missing:
+            return missing
+        return None
+
+    gepa.optimize(
+        seed_candidate=seed_candidate,
+        trainset=trainset,
+        valset=extended_valset,
+        adapter=adapter,
+        reflection_lm=None,
+        max_metric_calls=10,
+        run_dir=run_dir,
+        val_evaluation_policy=backfill_validation_policy,
+    )
+
+    resumed_state = state_mod.GEPAState.load(str(run_dir))
+    assert resumed_state.known_val_ids == {0, 1, 2}
+    assert resumed_state.unevaluated_val_ids == set()
+    assert set(resumed_state.program_val_scores[0].keys()) == {0, 1}
+    covered_ids = set().union(*[scores.keys() for scores in resumed_state.program_val_scores])
+    assert covered_ids == {0, 1, 2}
 
 
 @pytest.fixture(scope="module")

@@ -55,6 +55,8 @@ def remove_dominated_programs(program_at_pareto_front_valset, scores=None):
 
     dominators = [p for p in programs if p not in dominated]
     for front in program_at_pareto_front_valset.values():
+        if not front:
+            continue
         assert any(p in front for p in dominators)
 
     new_program_at_pareto_front_valset = {
@@ -90,6 +92,7 @@ def select_program_candidate_from_pareto_front(pareto_front_programs, train_val_
             program_frequency_in_validation_pareto_front[prog_idx] += 1
 
     sampling_list = [prog_idx for prog_idx, freq in program_frequency_in_validation_pareto_front.items() for _ in range(freq)]
-    assert len(sampling_list) > 0
+    if not sampling_list:
+        return idxmax(train_val_weighted_agg_scores_for_all_programs)
     curr_prog_id = rng.choice(sampling_list)
     return curr_prog_id

@@ -172,10 +172,10 @@ class GEPAState(Generic[RolloutOutput, ValId]):
 
     def _update_pareto_front_for_val_id(
         self,
-        val_id: int,
+        val_id: ValId,
         score: float,
-        program_idx: int,
-        outputs: dict[int, RolloutOutput] | None,
+        program_idx: ProgramIdx,
+        outputs: ValOutputs | None,
         run_dir: str | None,
         iteration: int,
     ) -> None:
@@ -183,28 +183,30 @@ class GEPAState(Generic[RolloutOutput, ValId]):
         if score > prev_score:
             self.pareto_front_valset[val_id] = score
             self.program_at_pareto_front_valset[val_id] = {program_idx}
-            if self.best_outputs_valset is not None and outputs is not None and (output := outputs[val_id]):
+            output = outputs.get(val_id) if outputs is not None else None
+            if self.best_outputs_valset is not None and output is not None:
                 self.best_outputs_valset[val_id] = [(program_idx, output)]
-                if run_dir is not None and outputs is not None:
-                    task_path = os.path.join(run_dir, "generated_best_outputs_valset", f"task_{val_id}")
-                    os.makedirs(task_path, exist_ok=True)
-                    with open(task_path.join(f"iter_{iteration}_prog_{program_idx}.json")) as fout:
+                if run_dir is not None:
+                    task_dir = os.path.join(run_dir, "generated_best_outputs_valset", f"task_{val_id}")
+                    os.makedirs(task_dir, exist_ok=True)
+                    with open(os.path.join(task_dir, f"iter_{iteration}_prog_{program_idx}.json"), "w") as fout:
                         json.dump(output, fout, indent=4, default=json_default)
         elif score == prev_score:
             pareto_front = self.program_at_pareto_front_valset.setdefault(val_id, set())
             pareto_front.add(program_idx)
-            if self.best_outputs_valset is not None and outputs is not None and val_id in outputs:
-                self.best_outputs_valset[val_id].append((program_idx, outputs[val_id]))
+            output = outputs.get(val_id) if outputs is not None else None
+            if self.best_outputs_valset is not None and output is not None:
+                self.best_outputs_valset[val_id].append((program_idx, output))
 
     def update_state_with_new_program(
         self,
-        parent_program_idx: list[int],
+        parent_program_idx: list[ProgramIdx],
         new_program: dict[str, str],
         valset_subscores: ValScores,
-        valset_outputs: dict[int, RolloutOutput] | None,
+        valset_outputs: ValOutputs | None,
         run_dir: str | None,
         num_metric_calls_by_discovery_of_new_program: int,
-    ) -> tuple[int, int]:
+    ) -> tuple[ProgramIdx, ProgramIdx]:
         new_program_idx = len(self.program_candidates)
         self.program_candidates.append(new_program)
         self.num_metric_calls_by_discovery.append(num_metric_calls_by_discovery_of_new_program)
@@ -224,7 +226,7 @@ class GEPAState(Generic[RolloutOutput, ValId]):
         linear_pareto_front_program_idx = self._best_program_idx()
         return new_program_idx, linear_pareto_front_program_idx
 
-    def _best_program_idx(self) -> int:
+    def _best_program_idx(self) -> ProgramIdx:
         best_idx = 0
         best_avg, best_cov = self.get_program_average(0)
         for idx in range(1, len(self.program_candidates)):
@@ -235,11 +237,12 @@ class GEPAState(Generic[RolloutOutput, ValId]):
         return best_idx
 
 
-def write_eval_output_to_directory(outputs: ValOutputs, output_dir: str):
-    for task_idx, output in outputs.items():
-        os.makedirs(os.path.join(output_dir, f"task_{task_idx}"), exist_ok=True)
-        with open(os.path.join(output_dir, f"task_{task_idx}", f"iter_{0}_prog_0.json"), "w") as f:
-            json.dump(output, f, indent=4, default=json_default)
+def write_eval_output_to_directory(scores: ValScores, output_dir: str):
+    for val_id, score in scores.items():
+        task_dir = os.path.join(output_dir, f"task_{val_id}")
+        os.makedirs(task_dir, exist_ok=True)
+        with open(os.path.join(task_dir, f"iter_{0}_prog_0.json"), "w") as f:
+            json.dump(score, f, indent=4, default=json_default)
 
 
 def initialize_gepa_state(
@@ -257,7 +260,7 @@ def initialize_gepa_state(
 
         seed_val_outputs, seed_val_scores = valset_evaluator(seed_candidate)
         if run_dir is not None:
-            write_eval_output_to_directory(seed_val_outputs, os.path.join(run_dir, "generated_best_outputs_valset"))
+            write_eval_output_to_directory(seed_val_scores, os.path.join(run_dir, "generated_best_outputs_valset"))
         num_evals_run += len(seed_val_scores)
 
         gepa_state = GEPAState(

@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -173,6 +174,26 @@ def test_dynamic_validation(run_dir):
     assert set(resumed_state.program_val_scores[0].keys()) == {0, 1}
     covered_ids = set().union(*[scores.keys() for scores in resumed_state.program_val_scores])
     assert covered_ids == {0, 1, 2}
+
+
+@pytest.fixture
+def legacy_run_dir(tmp_path: Path) -> Path:
+    legacy_run_dir = tmp_path / "legacy_run"
+    legacy_run_dir.mkdir(parents=True, exist_ok=True)
+    legacy_resource_path = Path(__file__).parent / "legacy_test_state.bin"
+    shutil.copy2(legacy_resource_path, legacy_run_dir / "gepa_state.bin")
+    return legacy_run_dir
+
+
+def test_load_legacy_state(legacy_run_dir):
+    """Ensure legacy gepa_state.bin files migrate correctly when loaded."""
+    state = state_mod.GEPAState.load(str(legacy_run_dir))
+
+    assert isinstance(state.program_val_scores, list)
+    assert all(isinstance(scores, dict) for scores in state.program_val_scores)
+    assert "prog_candidate_val_subscores" not in state.__dict__
+    assert state.validation_schema_version == state_mod.GEPAState._VALIDATION_SCHEMA_VERSION
+    assert state.valset_evaluations.keys() == set(range(45))
 
 
 @pytest.fixture(scope="module")

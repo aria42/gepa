@@ -237,12 +237,12 @@ class GEPAState(Generic[RolloutOutput, ValId]):
         return best_idx
 
 
-def write_eval_output_to_directory(scores: ValScores, output_dir: str):
-    for val_id, score in scores.items():
+def write_eval_output_to_directory(outputs: ValOutputs, output_dir: str):
+    for val_id, output in outputs.items():
         task_dir = os.path.join(output_dir, f"task_{val_id}")
         os.makedirs(task_dir, exist_ok=True)
         with open(os.path.join(task_dir, f"iter_{0}_prog_0.json"), "w") as f:
-            json.dump(score, f, indent=4, default=json_default)
+            json.dump(output, f, indent=4, default=json_default)
 
 
 def initialize_gepa_state(
@@ -260,7 +260,7 @@ def initialize_gepa_state(
 
         seed_val_outputs, seed_val_scores = valset_evaluator(seed_candidate)
         if run_dir is not None:
-            write_eval_output_to_directory(seed_val_scores, os.path.join(run_dir, "generated_best_outputs_valset"))
+            write_eval_output_to_directory(seed_val_outputs, os.path.join(run_dir, "generated_best_outputs_valset"))
         num_evals_run += len(seed_val_scores)
 
         gepa_state = GEPAState(
